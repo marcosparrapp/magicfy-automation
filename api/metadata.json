@@ -1,0 +1,5 @@
+{
+  "name": "Magicfy Automation Service",
+  "description": "A headless automation service that connects a Shopify store to the Murphy's Magic API. It uses webhooks to automatically process new orders and add downloadable products to a customer's account.",
+  "requestFramePermissions": []
+}
