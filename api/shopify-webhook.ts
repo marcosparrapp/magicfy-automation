@@ -6,7 +6,7 @@
 // IMPORTANT: Your Murphy's API Key should NOT be hardcoded here.
 // It must be stored as a secure environment variable. The platform requires it to be named API_KEY.
 const MURPHY_API_KEY = process.env.API_KEY;
-// This is the correct endpoint for the "Download Center API" as per the first PDF.
+// This is the correct endpoint for the "Download Center API".
 const API_ENDPOINT = 'http://downloads.murphysmagic.com/api/AddOrder/';
 
 /**
@@ -67,7 +67,6 @@ export default async function handler(req: any, res: any) {
     console.log(`[DIARY] Found ProductIDs (from SKUs) to send for Order #${orderNumber}: [${productIds}]`);
 
     // 5. Prepare the data for Murphy's Magic API using URLSearchParams
-    // This correctly formats the data as 'application/x-www-form-urlencoded'
     const bodyParams = new URLSearchParams({
       APIKey: MURPHY_API_KEY,
       FirstName: customer.first_name || 'Valued',
@@ -101,11 +100,10 @@ export default async function handler(req: any, res: any) {
         throw new Error(`Failed to parse JSON response from Murphy's: ${responseText}`);
     }
 
-    // 7. Handle the response from Murphy's with more nuance
-    if (result.message === 'success') {
-        console.log(`[DIARY] SUCCESS: Order #${orderNumber} processed. New products were added to ${customer.email}'s account.`);
-    } else if (result.message === 'No products added') {
-        console.log(`[DIARY] SUCCESS (Already Owned): Order #${orderNumber} processed. The customer ${customer.email} already owned these products. Nothing new was added.`);
+    // 7. Handle the response from Murphy's in a simplified, robust way.
+    // Both 'success' and 'No products added' indicate a successful outcome.
+    if (result.message === 'success' || result.message === 'No products added') {
+        console.log(`[DIARY] SUCCESS: Order #${orderNumber} for ${customer.email} was processed successfully. Murphy's API confirmed the request.`);
     } else {
         // This handles explicit errors like {"error": "..."} or other unexpected messages.
         const failureMessage = result.error || JSON.stringify(result);
