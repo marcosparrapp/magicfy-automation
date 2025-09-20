@@ -94,7 +94,6 @@ export default async function handler(req: any, res: any) {
         throw new Error(`Murphy's API Error: Status ${murphyResponse.status} - ${responseText}`);
     }
 
-    // Try to parse the response as JSON, but handle cases where it might not be
     let result;
     try {
         result = JSON.parse(responseText);
@@ -102,18 +101,17 @@ export default async function handler(req: any, res: any) {
         throw new Error(`Failed to parse JSON response from Murphy's: ${responseText}`);
     }
 
-    // 7. Handle the response from Murphy's
-    // If the API returned a JSON object with an 'error' key, it's a failure.
-    if (result.error) {
-        throw new Error(`Murphy's API returned a business logic error: ${result.error}`);
+    // 7. Handle the response from Murphy's with more nuance
+    if (result.message === 'success') {
+        console.log(`[DIARY] SUCCESS: Order #${orderNumber} processed. New products were added to ${customer.email}'s account.`);
+    } else if (result.message === 'No products added') {
+        console.log(`[DIARY] SUCCESS (Already Owned): Order #${orderNumber} processed. The customer ${customer.email} already owned these products. Nothing new was added.`);
+    } else {
+        // This handles explicit errors like {"error": "..."} or other unexpected messages.
+        const failureMessage = result.error || JSON.stringify(result);
+        throw new Error(`Murphy's API indicated a failure: ${failureMessage}`);
     }
     
-    // As per documentation, a success response is {"message":"success"}
-    if (result.message !== 'success') {
-      console.warn(`[DIARY] Unknown success response from Murphy's API: ${responseText}`);
-    }
-
-    console.log(`[DIARY] SUCCESS: Order #${orderNumber} for ${customer.email} was processed successfully by Murphy's.`);
     console.log("==================================================");
     return res.status(200).send('Webhook processed successfully.');
 
