@@ -10,9 +10,10 @@ const API_ENDPOINT = 'http://downloads.murphysmagic.com/api/AddOrder/';
 
 /**
  * Handles the incoming webhook from Shopify.
- * @param req The request object, containing the Shopify order payload.
+ * @param req The request object from Vercel's Node.js runtime.
+ * @param res The response object from Vercel's Node.js runtime.
  */
-export default async function handler(req: Request) {
+export default async function handler(req: any, res: any) {
   // Start of the "diary" for this request
   console.log("==================================================");
   console.log(`[DIARY] New request received at: ${new Date().toISOString()}`);
@@ -20,13 +21,14 @@ export default async function handler(req: Request) {
   // 1. Verify the request is a POST request
   if (req.method !== 'POST') {
     console.warn('[DIARY] Request blocked: Not a POST request.');
-    return new Response('Method Not Allowed', { status: 405 });
+    res.setHeader('Allow', 'POST');
+    return res.status(405).send('Method Not Allowed');
   }
 
   // 2. Check for the secret API Key
   if (!MURPHY_API_KEY) {
     console.error('[DIARY] CRITICAL ERROR: Murphy\'s API Key (API_KEY) is not configured in environment variables.');
-    return new Response('Server configuration error.', { status: 500 });
+    return res.status(500).send('Server configuration error.');
   }
   console.log('[DIARY] Murphy\'s API Key is present.');
   
@@ -34,8 +36,9 @@ export default async function handler(req: Request) {
   let orderNumber: string | null = null;
 
   try {
-    // 3. Parse the incoming order data from Shopify
-    const order = await req.json();
+    // 3. Get the pre-parsed JSON body from the request
+    // In Vercel's Node.js runtime, the body is already available in `req.body`.
+    const order = req.body;
     orderNumber = order.order_number || 'UNKNOWN'; // Store order number for later logs
 
     console.log(`[DIARY] Received and parsed data for Shopify Order #${orderNumber}.`);
@@ -43,7 +46,7 @@ export default async function handler(req: Request) {
     // Basic validation to ensure it's a valid order payload
     if (!order.customer || !order.line_items) {
       console.warn(`[DIARY] Order #${orderNumber} has an invalid format. Missing customer or line_items.`);
-      return new Response('Invalid payload', { status: 400 });
+      return res.status(400).send('Invalid payload');
     }
 
     const { customer, line_items } = order;
@@ -61,7 +64,7 @@ export default async function handler(req: Request) {
 
     if (!productIds) {
       console.log(`[DIARY] Order #${orderNumber} has no items with a SKU. Nothing to send to Murphy's. Process finished.`);
-      return new Response('No products to process.', { status: 200 });
+      return res.status(200).send('No products to process.');
     }
 
     console.log(`[DIARY] Found ProductIDs (from SKUs) to send for Order #${orderNumber}: [${productIds}]`);
@@ -101,7 +104,7 @@ export default async function handler(req: Request) {
     if (result.message === 'success') {
         console.log(`[DIARY] SUCCESS: Order #${orderNumber} for ${customer.email} was processed successfully by Murphy's.`);
         console.log("==================================================");
-        return new Response('Webhook processed successfully.', { status: 200 });
+        return res.status(200).send('Webhook processed successfully.');
     } else {
         // This will be caught by the catch block below
         throw new Error(`Unknown success response from Murphy's API: ${responseText}`);
@@ -112,6 +115,6 @@ export default async function handler(req: Request) {
     console.error(`[DIARY] FAILED to process Shopify webhook for Order #${orderNumber || 'N/A'}: ${errorMessage}`);
     console.log("==================================================");
     // Return a 500 status to let Shopify know it failed and it might retry
-    return new Response(`Webhook processing failed: ${errorMessage}`, { status: 500 });
+    return res.status(500).send(`Webhook processing failed: ${errorMessage}`);
   }
 }
