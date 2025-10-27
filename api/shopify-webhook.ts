@@ -6,117 +6,85 @@
 // IMPORTANT: Your Murphy's API Key should NOT be hardcoded here.
 // It must be stored as a secure environment variable. The platform requires it to be named API_KEY.
 const MURPHY_API_KEY = process.env.API_KEY;
-// This is the correct endpoint for the "Download Center API".
 const API_ENDPOINT = 'http://downloads.murphysmagic.com/api/AddOrder/';
 
 /**
  * Handles the incoming webhook from Shopify.
- * @param req The request object from Vercel's Node.js runtime.
- * @param res The response object from Vercel's Node.js runtime.
+ * @param req The request object, containing the Shopify order payload.
  */
-export default async function handler(req: any, res: any) {
-  // Start of the "diary" for this request
-  console.log("==================================================");
-  console.log(`[DIARY] New request received at: ${new Date().toISOString()}`);
-
+export default async function handler(req: Request) {
   // 1. Verify the request is a POST request
   if (req.method !== 'POST') {
-    console.warn('[DIARY] Request blocked: Not a POST request.');
-    res.setHeader('Allow', 'POST');
-    return res.status(405).send('Method Not Allowed');
+    return new Response('Method Not Allowed', { status: 405 });
   }
 
   // 2. Check for the secret API Key
   if (!MURPHY_API_KEY) {
-    console.error('[DIARY] CRITICAL ERROR: Murphy\'s API Key (API_KEY) is not configured in environment variables.');
-    return res.status(500).send('Server configuration error.');
+    console.error('CRITICAL: API_KEY environment variable is not set.');
+    return new Response('Server configuration error.', { status: 500 });
   }
-  console.log('[DIARY] Murphy\'s API Key is present.');
   
-  let orderNumber: string | null = null;
-
   try {
-    // 3. Get the pre-parsed JSON body from the request
-    const order = req.body;
-    orderNumber = order.order_number || 'UNKNOWN';
+    // 3. Parse the incoming order data from Shopify
+    const order = await req.json();
 
-    console.log(`[DIARY] Received and parsed data for Shopify Order #${orderNumber}.`);
-
+    // Basic validation to ensure it's a valid order payload
     if (!order.customer || !order.line_items) {
-      console.warn(`[DIARY] Order #${orderNumber} has an invalid format. Missing customer or line_items.`);
-      return res.status(400).send('Invalid payload');
+      console.warn('Received webhook with invalid payload format.');
+      return new Response('Invalid payload', { status: 400 });
     }
 
     const { customer, line_items } = order;
-    console.log(`[DIARY] Order #${orderNumber} is for customer: ${customer.email}.`);
     
     // 4. Extract Product IDs from SKUs
+    // The SKU in Shopify MUST be the Murphy's Magic ProductID.
     const productIds = line_items
-      .map((item: { sku: string; title: string }) => {
-        console.log(`[DIARY] Checking item: "${item.title}" with SKU: ${item.sku || 'No SKU'}`);
-        return item.sku;
-      })
-      .filter(Boolean) // This removes any null/empty SKUs
+      .map((item: { sku: string }) => item.sku)
+      .filter(Boolean) // Remove any items that don't have a SKU
       .join(',');
 
     if (!productIds) {
-      console.log(`[DIARY] Order #${orderNumber} has no items with a SKU. Nothing to send to Murphy's. Process finished.`);
-      return res.status(200).send('No products to process.');
+      console.log(`Order #${order.order_number} has no line items with SKUs. Skipping.`);
+      return new Response('No products to process.', { status: 200 });
     }
 
-    console.log(`[DIARY] Found ProductIDs (from SKUs) to send for Order #${orderNumber}: [${productIds}]`);
+    // 5. Prepare the data for Murphy's Magic API
+    const formData = new FormData();
+    formData.append('APIKey', MURPHY_API_KEY);
+    formData.append('FirstName', customer.first_name || 'Customer');
+    formData.append('LastName', customer.last_name || ' '); // Use a space if no last name
+    formData.append('Email', customer.email);
+    formData.append('ProductIds', productIds);
 
-    // 5. Prepare the data for Murphy's Magic API using URLSearchParams
-    const bodyParams = new URLSearchParams({
-      APIKey: MURPHY_API_KEY,
-      FirstName: customer.first_name || 'Valued',
-      LastName: customer.last_name || 'Customer',
-      Email: customer.email,
-      ProductIds: productIds,
-    });
-    
-    console.log(`[DIARY] Calling Murphy's Magic API for Order #${orderNumber}...`);
-
-    // 6. Call the Murphy's Magic API with the correct headers and body
+    // 6. Call the Murphy's Magic API to place the order
     const murphyResponse = await fetch(API_ENDPOINT, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: bodyParams.toString(),
+      body: formData,
     });
 
-    const responseText = await murphyResponse.text();
-    console.log(`[DIARY] Murphy's API responded with status ${murphyResponse.status}. Response body: ${responseText}`);
-
     if (!murphyResponse.ok) {
-        throw new Error(`Murphy's API Error: Status ${murphyResponse.status} - ${responseText}`);
+        const errorText = await murphyResponse.text();
+        throw new Error(`Murphy's API Error: ${murphyResponse.status} - ${errorText}`);
     }
 
-    let result;
-    try {
-        result = JSON.parse(responseText);
-    } catch (parseError) {
-        throw new Error(`Failed to parse JSON response from Murphy's: ${responseText}`);
+    const result = await murphyResponse.json();
+
+    if (result.error) {
+        throw new Error(`Murphy's API returned an error: ${result.error}`);
     }
 
-    // 7. Handle the response from Murphy's in a simplified, robust way.
-    // Both 'success' and 'No products added' indicate a successful outcome.
-    if (result.message === 'success' || result.message === 'No products added') {
-        console.log(`[DIARY] SUCCESS: Order #${orderNumber} for ${customer.email} was processed successfully. Murphy's API confirmed the request.`);
+    // 7. Handle the response and send a success status back to Shopify
+    if (result.message === 'success') {
+        console.log(`Successfully processed order #${order.order_number} for ${customer.email}.`);
+        return new Response('Webhook processed successfully.', { status: 200 });
     } else {
-        // This handles explicit errors like {"error": "..."} or other unexpected messages.
-        const failureMessage = result.error || JSON.stringify(result);
-        throw new Error(`Murphy's API indicated a failure: ${failureMessage}`);
+        throw new Error(`Unknown success response from Murphy's API: ${JSON.stringify(result)}`);
     }
-    
-    console.log("==================================================");
-    return res.status(200).send('Webhook processed successfully.');
 
   } catch (error) {
+    console.error('Failed to process Shopify webhook:', error);
     const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
-    console.error(`[DIARY] FAILED to process Shopify webhook for Order #${orderNumber || 'N/A'}: ${errorMessage}`);
-    console.log("==================================================");
-    return res.status(500).send(`Webhook processing failed: ${errorMessage}`);
+    // Return a 500 status to let Shopify know it failed and it might retry
+    return new Response(`Webhook processing failed: ${errorMessage}`, { status: 500 });
   }
 }
